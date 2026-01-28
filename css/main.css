@@ -31,10 +31,43 @@ body {
   position: absolute;
   inset: 0;
   z-index: 0;
+  background: #f7f7f7;
 }
 
-#map .leaflet-tile-pane {
-  filter: saturate(0.95) contrast(1.05) brightness(1.03);
+#map canvas {
+  filter: brightness(1.05) contrast(0.88) saturate(0.65);
+}
+
+#map .mapboxgl-canvas-container,
+#map .mapboxgl-canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+#map .mapboxgl-control-container {
+  z-index: 2;
+}
+
+.mapboxgl-ctrl-group {
+  border: 0;
+  border-radius: 14px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+}
+
+.mapboxgl-ctrl-group button {
+  width: 36px;
+  height: 36px;
+}
+
+.mapboxgl-ctrl-attrib {
+  background: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(8px);
+  border-radius: 12px;
+  padding: 4px 8px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);
+  margin: 10px;
 }
 
 .header {
