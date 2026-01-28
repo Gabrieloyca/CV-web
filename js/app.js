@@ -1,4 +1,4 @@
-/* global L */
+/* global L, mapboxgl */
 (function () {
   'use strict';
 
@@ -32,15 +32,19 @@
     }
   }
 
-  const map = L.map('map', { zoomControl: false });
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png', {
-    opacity: 0.96,
-    attribution: '&copy; OpenStreetMap, &copy; CARTO'
+  const MAPBOX_TOKEN =
+    'pk.eyJ1IjoiZ2FicmllbG95Y2EiLCJhIjoiY21reHc4dGY1MDB6YTNjc2VwMzU3enN1dyJ9.gQPuafwneKenzEBQfjUZDQ';
+
+  const map = L.map('map', { zoomControl: false, attributionControl: false });
+  L.mapboxGL({
+    accessToken: MAPBOX_TOKEN,
+    style: 'mapbox://styles/mapbox/light-v11',
+    projection: 'mercator'
   }).addTo(map);
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png', {
-    opacity: 0.4
-  }).addTo(map);
-  L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+  L.control.zoom({ position: 'topright' }).addTo(map);
+  L.control.attribution({ position: 'bottomright', prefix: false }).addTo(map);
+  L.control.scale({ position: 'bottomleft', imperial: false, maxWidth: 120 }).addTo(map);
 
   const HOME_CENTER = [47.1, 2.6];
   const HOME_ZOOM = 5.4;
