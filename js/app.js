@@ -54,6 +54,15 @@
   map.addControl(new mapboxgl.AttributionControl({ compact: true }), 'bottom-right');
   map.addControl(new mapboxgl.ScaleControl({ maxWidth: 120, unit: 'metric' }), 'bottom-left');
 
+  const createEase = (linearity = 0.2) => (t) => {
+    const easeOut = 1 - Math.pow(1 - t, 2);
+    return t * linearity + easeOut * (1 - linearity);
+  };
+
+  const easeFly = createEase(0.2);
+  const easeFlySoft = createEase(0.22);
+  const easeFocus = createEase(0.25);
+
   map.on('style.load', () => {
     try {
       map.setProjection('mercator');
@@ -124,7 +133,7 @@
         }
       });
     } catch (error) {
-      console.warn('Style adjustments:', error);
+      console.warn('Ajustes de estilo:', error);
     }
   });
 
@@ -779,12 +788,22 @@
     }
   ];
 
+  const PROJECT_SOURCE_ID = 'projects';
+  const PROJECT_LAYER_ID = 'project-pins';
+  const PROJECT_CLUSTER_LAYER_ID = 'project-clusters';
+  const PROJECT_CLUSTER_COUNT_LAYER_ID = 'project-cluster-count';
+  const ARCHITECTURE_SOURCE_ID = 'architecture';
+  const ARCHITECTURE_LAYER_ID = 'architecture-pins';
+  const BOUNDARY_SOURCE_ID = 'project-boundary';
+  const BOUNDARY_LAYER_ID = 'project-boundary';
+
+  let activeProjectPopup = null;
   let architectureRevealTimeout = null;
   let architecturePhotoTimers = [];
 
   function buildArchitecturePinSvg() {
     return `
-      <svg viewBox="0 0 36 50" xmlns="http://www.w3.org/2000/svg" role="presentation">
+      <svg viewBox="0 0 36 50" width="36" height="50" xmlns="http://www.w3.org/2000/svg" role="presentation">
         <path d="M18 49C15 45.2 3 30.6 3 19A15 15 0 0 1 18 4a15 15 0 0 1 15 15c0 11.6-12 26.2-15 30z" fill="#0b1120" />
         <path d="M18 42.5c-2.6-3.1-11.2-14-11.2-23.4A11.2 11.2 0 0 1 18 7.9a11.2 11.2 0 0 1 11.2 11.2c0 9.4-8.6 20.3-11.2 23.4z" fill="#1f2937" />
         <circle cx="18" cy="19.5" r="5.8" fill="#f8fafc" opacity="0.2" />
@@ -795,7 +814,7 @@
   function buildPinSvg(role) {
     if (role === 'chef') {
       return `
-        <svg viewBox="0 0 40 54" xmlns="http://www.w3.org/2000/svg" role="presentation">
+        <svg viewBox="0 0 40 54" width="40" height="54" xmlns="http://www.w3.org/2000/svg" role="presentation">
           <defs>
             <radialGradient id="chefGlow" cx="50%" cy="35%" r="60%">
               <stop offset="0%" stop-color="#ffffff" stop-opacity="0.28" />
@@ -812,7 +831,7 @@
     }
 
     return `
-      <svg viewBox="0 0 34 46" xmlns="http://www.w3.org/2000/svg" role="presentation">
+      <svg viewBox="0 0 34 46" width="34" height="46" xmlns="http://www.w3.org/2000/svg" role="presentation">
         <path fill="#64748b" d="M17 45c-3-3.5-15-16.3-15-27.6C2 8.66 8.82 2 17 2s15 6.66 15 15.4C32 28.7 20 41.5 17 45z" />
         <path fill="#94a3b8" d="M17 40.8c-2.6-3-12.2-13.8-12.2-22.8C4.8 10.37 10.1 6 17 6s12.2 4.37 12.2 12c0 9-9.6 19.8-12.2 22.8z" />
         <circle cx="17" cy="18" r="6.2" fill="#e2e8f0" opacity="0.75" />
@@ -824,6 +843,47 @@
     return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svgMarkup)}`;
   }
 
+  function toLngLat(coords) {
+    if (!Array.isArray(coords) || coords.length < 2) {
+      return [0, 0];
+    }
+    return [coords[1], coords[0]];
+  }
+
+  function buildProjectsGeojson() {
+    return {
+      type: 'FeatureCollection',
+      features: projects.map((project) => ({
+        type: 'Feature',
+        properties: {
+          id: project.id,
+          role: project.role,
+          title: project.title
+        },
+        geometry: {
+          type: 'Point',
+          coordinates: toLngLat(project.coords)
+        }
+      }))
+    };
+  }
+
+  function buildArchitectureGeojson() {
+    return {
+      type: 'FeatureCollection',
+      features: architectureProjects.map((project) => ({
+        type: 'Feature',
+        properties: {
+          id: project.id,
+          title: project.title
+        },
+        geometry: {
+          type: 'Point',
+          coordinates: toLngLat(project.coords)
+        }
+      }))
+    };
+  }
 
   const projectStats = projects.reduce(
     (acc, project) => {
@@ -856,6 +916,301 @@
       ${project.year} – ${project.client}<br />
       <strong>Rôle :</strong> ${formatRole(project.role)}${partnerLine}
     `;
+  }
+
+  function closeProjectPopup() {
+    if (activeProjectPopup) {
+      activeProjectPopup.remove();
+      activeProjectPopup = null;
+    }
+  }
+
+  function setLayerVisibility(layerId, visible) {
+    if (!map.getLayer(layerId)) {
+      return;
+    }
+    map.setLayoutProperty(layerId, 'visibility', visible ? 'visible' : 'none');
+  }
+
+  function getGeojsonBounds(geojson) {
+    if (!geojson) {
+      return null;
+    }
+    let minLng = Infinity;
+    let minLat = Infinity;
+    let maxLng = -Infinity;
+    let maxLat = -Infinity;
+
+    function scanCoords(coords) {
+      if (typeof coords[0] === 'number' && typeof coords[1] === 'number') {
+        const [lng, lat] = coords;
+        minLng = Math.min(minLng, lng);
+        minLat = Math.min(minLat, lat);
+        maxLng = Math.max(maxLng, lng);
+        maxLat = Math.max(maxLat, lat);
+        return;
+      }
+      coords.forEach((coord) => scanCoords(coord));
+    }
+
+    if (geojson.type === 'FeatureCollection') {
+      geojson.features.forEach((feature) => {
+        if (feature && feature.geometry) {
+          scanCoords(feature.geometry.coordinates);
+        }
+      });
+    } else if (geojson.type === 'Feature') {
+      scanCoords(geojson.geometry.coordinates);
+    } else if (geojson.coordinates) {
+      scanCoords(geojson.coordinates);
+    }
+
+    if (!Number.isFinite(minLng) || !Number.isFinite(minLat)) {
+      return null;
+    }
+    return [
+      [minLng, minLat],
+      [maxLng, maxLat]
+    ];
+  }
+
+  function initMapLayers() {
+    const projectGeojson = buildProjectsGeojson();
+    const architectureGeojson = buildArchitectureGeojson();
+
+    const loadImage = (id, svgMarkup, options = {}) =>
+      new Promise((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => {
+          if (!map.hasImage(id)) {
+            map.addImage(id, image, { pixelRatio: 2, ...options });
+          }
+          resolve();
+        };
+        image.onerror = () => reject(new Error(`Failed to load ${id}`));
+        image.src = svgToDataUrl(svgMarkup);
+      });
+
+    return Promise.all([
+      loadImage('pin-chef', buildPinSvg('chef')),
+      loadImage('pin-charge', buildPinSvg('charge')),
+      loadImage('pin-architecture', buildArchitecturePinSvg())
+    ]).then(() => {
+      map.addSource(PROJECT_SOURCE_ID, {
+        type: 'geojson',
+        data: projectGeojson,
+        cluster: true,
+        clusterRadius: 44,
+        clusterMaxZoom: 14
+      });
+
+      map.addLayer({
+        id: PROJECT_CLUSTER_LAYER_ID,
+        type: 'circle',
+        source: PROJECT_SOURCE_ID,
+        filter: ['has', 'point_count'],
+        paint: {
+          'circle-color': [
+            'step',
+            ['get', 'point_count'],
+            'rgba(255, 255, 255, 0.95)',
+            10,
+            'rgba(255, 255, 255, 0.96)',
+            20,
+            'rgba(35, 47, 72, 0.95)'
+          ],
+          'circle-radius': [
+            'step',
+            ['get', 'point_count'],
+            20,
+            10,
+            24,
+            20,
+            28
+          ],
+          'circle-stroke-width': 2,
+          'circle-stroke-color': [
+            'step',
+            ['get', 'point_count'],
+            'rgba(35, 47, 72, 0.85)',
+            10,
+            'rgba(35, 47, 72, 0.9)',
+            20,
+            'rgba(255, 255, 255, 0.9)'
+          ],
+          'circle-stroke-opacity': 1
+        }
+      });
+
+      map.addLayer({
+        id: PROJECT_CLUSTER_COUNT_LAYER_ID,
+        type: 'symbol',
+        source: PROJECT_SOURCE_ID,
+        filter: ['has', 'point_count'],
+        layout: {
+          'text-field': '{point_count_abbreviated}',
+          'text-font': ['Inter Semi Bold', 'Open Sans Bold'],
+          'text-size': ['step', ['get', 'point_count'], 14, 10, 15, 20, 16],
+          'text-allow-overlap': true
+        },
+        paint: {
+          'text-color': [
+            'step',
+            ['get', 'point_count'],
+            '#232f48',
+            20,
+            '#ffffff'
+          ]
+        }
+      });
+
+      map.addLayer({
+        id: PROJECT_LAYER_ID,
+        type: 'symbol',
+        source: PROJECT_SOURCE_ID,
+        filter: ['!', ['has', 'point_count']],
+        layout: {
+          'icon-image': ['match', ['get', 'role'], 'chef', 'pin-chef', 'pin-charge'],
+          'icon-size': 1,
+          'icon-allow-overlap': true
+        }
+      });
+
+      map.addSource(ARCHITECTURE_SOURCE_ID, {
+        type: 'geojson',
+        data: architectureGeojson
+      });
+
+      map.addLayer({
+        id: ARCHITECTURE_LAYER_ID,
+        type: 'symbol',
+        source: ARCHITECTURE_SOURCE_ID,
+        layout: {
+          'icon-image': 'pin-architecture',
+          'icon-size': 1,
+          'icon-allow-overlap': true
+        }
+      });
+
+      map.addSource(BOUNDARY_SOURCE_ID, {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] }
+      });
+
+      map.addLayer({
+        id: BOUNDARY_LAYER_ID,
+        type: 'line',
+        source: BOUNDARY_SOURCE_ID,
+        layout: {
+          visibility: 'none'
+        },
+        paint: {
+          'line-color': '#111827',
+          'line-width': 2.4,
+          'line-opacity': 0.85
+        }
+      });
+
+      setLayerVisibility(PROJECT_LAYER_ID, false);
+      setLayerVisibility(PROJECT_CLUSTER_LAYER_ID, false);
+      setLayerVisibility(PROJECT_CLUSTER_COUNT_LAYER_ID, false);
+      setLayerVisibility(ARCHITECTURE_LAYER_ID, false);
+
+      map.on('click', PROJECT_LAYER_ID, (event) => {
+        suppressMapClose = true;
+        const feature = event.features && event.features[0];
+        if (!feature) {
+          suppressMapClose = false;
+          return;
+        }
+        const project = projects.find((item) => item.id === feature.properties.id);
+        if (project) {
+          focusProjectArea(project);
+          openProjectPanel(project);
+          closeProjectPopup();
+          activeProjectPopup = new mapboxgl.Popup({
+            closeButton: false,
+            closeOnClick: false,
+            offset: [0, -24],
+            className: 'project-popup'
+          })
+            .setLngLat(feature.geometry.coordinates)
+            .setHTML(createProjectPopup(project))
+            .addTo(map);
+        }
+        requestAnimationFrame(() => {
+          suppressMapClose = false;
+        });
+      });
+
+      map.on('mouseenter', PROJECT_LAYER_ID, () => {
+        map.getCanvas().style.cursor = 'pointer';
+      });
+      map.on('mouseleave', PROJECT_LAYER_ID, () => {
+        map.getCanvas().style.cursor = '';
+      });
+
+      map.on('click', PROJECT_CLUSTER_LAYER_ID, (event) => {
+        suppressMapClose = true;
+        const features = map.queryRenderedFeatures(event.point, { layers: [PROJECT_CLUSTER_LAYER_ID] });
+        const clusterFeature = features[0];
+        if (!clusterFeature) {
+          suppressMapClose = false;
+          return;
+        }
+        const clusterId = clusterFeature.properties.cluster_id;
+        const source = map.getSource(PROJECT_SOURCE_ID);
+        if (source && source.getClusterExpansionZoom) {
+          source.getClusterExpansionZoom(clusterId, (error, zoom) => {
+            if (error) {
+              suppressMapClose = false;
+              return;
+            }
+            map.easeTo({ center: clusterFeature.geometry.coordinates, zoom, easing: easeFly });
+            requestAnimationFrame(() => {
+              suppressMapClose = false;
+            });
+          });
+        }
+      });
+
+      map.on('mouseenter', PROJECT_CLUSTER_LAYER_ID, () => {
+        map.getCanvas().style.cursor = 'pointer';
+      });
+      map.on('mouseleave', PROJECT_CLUSTER_LAYER_ID, () => {
+        map.getCanvas().style.cursor = '';
+      });
+
+      map.on('click', ARCHITECTURE_LAYER_ID, (event) => {
+        suppressMapClose = true;
+        const feature = event.features && event.features[0];
+        if (!feature) {
+          suppressMapClose = false;
+          return;
+        }
+        const project = architectureProjects.find((item) => item.id === feature.properties.id);
+        if (project) {
+          focusArchitectureProject(project);
+        }
+        requestAnimationFrame(() => {
+          suppressMapClose = false;
+        });
+      });
+
+      map.on('mouseenter', ARCHITECTURE_LAYER_ID, () => {
+        map.getCanvas().style.cursor = 'pointer';
+      });
+      map.on('mouseleave', ARCHITECTURE_LAYER_ID, () => {
+        map.getCanvas().style.cursor = '';
+      });
+
+      if (pendingProjectVisibility) {
+        showProjectMarkers();
+      }
+      if (pendingArchitectureVisibility) {
+        ensureArchitectureMarkers();
+      }
+    });
   }
 
   const publications = [
@@ -1033,19 +1388,6 @@
     }
   }
 
-  function removeProjectMarkers() {
-    setLayerVisibility(PROJECT_LAYER_ID, false);
-    setLayerVisibility(PROJECT_CLUSTER_LAYER_ID, false);
-    setLayerVisibility(PROJECT_CLUSTER_COUNT_LAYER_ID, false);
-    clearBoundaryLayer();
-    closeProjectPopup();
-  }
-
-  function removeArchitectureMarkers() {
-    setLayerVisibility(ARCHITECTURE_LAYER_ID, false);
-    hideArchitectureDetail();
-  }
-
   async function loadBoundaryLayer(fileName) {
     if (!fileName) {
       return null;
@@ -1096,14 +1438,37 @@
     }
 
     if (bounds) {
-      map.fitBounds(bounds, { padding: 60, duration: 1600 });
+      map.fitBounds(bounds, { padding: 60, duration: 1600, easing: easeFocus });
     } else if (Array.isArray(project.coords)) {
       map.flyTo({
         center: toLngLat(project.coords),
         zoom: project.detailZoom || DETAIL_FALLBACK_ZOOM,
-        duration: 1600
+        duration: 1600,
+        easing: easeFocus
       });
     }
+  }
+
+  let pendingProjectVisibility = false;
+  let pendingArchitectureVisibility = false;
+
+  function showProjectMarkers() {
+    if (!map.getLayer(PROJECT_LAYER_ID)) {
+      pendingProjectVisibility = true;
+      return;
+    }
+    pendingProjectVisibility = false;
+    setLayerVisibility(PROJECT_LAYER_ID, true);
+    setLayerVisibility(PROJECT_CLUSTER_LAYER_ID, true);
+    setLayerVisibility(PROJECT_CLUSTER_COUNT_LAYER_ID, true);
+  }
+
+  function removeProjectMarkers() {
+    setLayerVisibility(PROJECT_LAYER_ID, false);
+    setLayerVisibility(PROJECT_CLUSTER_LAYER_ID, false);
+    setLayerVisibility(PROJECT_CLUSTER_COUNT_LAYER_ID, false);
+    clearBoundaryLayer();
+    closeProjectPopup();
   }
 
   function clearArchitectureTimers() {
@@ -1184,7 +1549,17 @@
   }
 
   function ensureArchitectureMarkers() {
+    if (!map.getLayer(ARCHITECTURE_LAYER_ID)) {
+      pendingArchitectureVisibility = true;
+      return;
+    }
+    pendingArchitectureVisibility = false;
     setLayerVisibility(ARCHITECTURE_LAYER_ID, true);
+  }
+
+  function removeArchitectureMarkers() {
+    setLayerVisibility(ARCHITECTURE_LAYER_ID, false);
+    hideArchitectureDetail();
   }
 
   function focusArchitectureProject(project) {
@@ -1195,6 +1570,7 @@
     hideArchitectureDetail();
 
     const zoom = project.zoom || 13;
+    map.flyTo({ center: toLngLat(project.coords), zoom, duration: 1800, easing: easeFocus });
 
     map.once('moveend', () => {
       architectureRevealTimeout = setTimeout(() => {
@@ -1390,6 +1766,7 @@
     if (resetIntro && activeScreen === 'projects') {
       showProjectIntro();
     }
+    closeProjectPopup();
   }
 
   if (projectCloseButton) {
@@ -1521,6 +1898,7 @@
   window.addEventListener('resize', computePlayfield);
 
   function toHome() {
+    map.jumpTo({ center: toLngLat(HOME_CENTER), zoom: HOME_ZOOM });
     removeProjectMarkers();
     removeArchitectureMarkers();
     closeProjectPanel({ resetIntro: false });
@@ -1532,6 +1910,8 @@
   }
 
   function toProjects() {
+    map.flyTo({ center: toLngLat(PROJECT_CENTER), zoom: PROJECT_ZOOM, duration: 2000, easing: easeFly });
+    showProjectMarkers();
     removeArchitectureMarkers();
     closeProjectPanel();
     showProjectIntro();
@@ -1553,6 +1933,7 @@
     if (pubList) {
       pubList.scrollTop = 0;
     }
+    map.flyTo({ center: toLngLat(PUBLICATION_CENTER), zoom: PUBLICATION_ZOOM, duration: 2200, easing: easeFly });
   }
 
   function toArchitecture() {
@@ -1564,6 +1945,7 @@
     showArchitectureIntro();
     hideArchitectureDetail();
     ensureArchitectureMarkers();
+    map.flyTo({ center: toLngLat(ARCHITECTURE_CENTER), zoom: ARCHITECTURE_ZOOM, duration: 2200, easing: easeFlySoft });
   }
 
   map.on('click', () => {
@@ -1576,15 +1958,24 @@
     if (activeScreen === 'architecture' && archDetailElement && !archDetailElement.hidden) {
       hideArchitectureDetail();
     }
+    closeProjectPopup();
+  });
+
+  map.on('load', () => {
+    initMapLayers().catch((error) => {
+      console.warn('Map layers init failed:', error);
+    });
   });
 
   function init() {
     hydrateThemeAssets();
+    map.jumpTo({ center: toLngLat(HOME_CENTER), zoom: HOME_ZOOM });
     hideArchitectureIntro();
     activateScreen('home');
   }
 
   init();
 
+  console.assert(typeof mapboxgl !== 'undefined', 'Mapbox GL should be available');
   console.assert(Array.isArray(projects) && projects.length > 0, 'Project list should not be empty');
 })();
