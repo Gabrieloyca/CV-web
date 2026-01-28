@@ -124,7 +124,7 @@
         }
       });
     } catch (error) {
-      console.warn('Ajustes de estilo:', error);
+      console.warn('Style adjustments:', error);
     }
   });
 
@@ -1024,7 +1024,26 @@
   }
 
   function clearBoundaryLayer() {
+    const source = map.getSource(BOUNDARY_SOURCE_ID);
+    if (source) {
+      source.setData({ type: 'FeatureCollection', features: [] });
     }
+    if (map.getLayer(BOUNDARY_LAYER_ID)) {
+      map.setLayoutProperty(BOUNDARY_LAYER_ID, 'visibility', 'none');
+    }
+  }
+
+  function removeProjectMarkers() {
+    setLayerVisibility(PROJECT_LAYER_ID, false);
+    setLayerVisibility(PROJECT_CLUSTER_LAYER_ID, false);
+    setLayerVisibility(PROJECT_CLUSTER_COUNT_LAYER_ID, false);
+    clearBoundaryLayer();
+    closeProjectPopup();
+  }
+
+  function removeArchitectureMarkers() {
+    setLayerVisibility(ARCHITECTURE_LAYER_ID, false);
+    hideArchitectureDetail();
   }
 
   async function loadBoundaryLayer(fileName) {
@@ -1061,6 +1080,14 @@
       const data = await loadBoundaryLayer(boundaryFile);
       if (data) {
         clearBoundaryLayer();
+        const source = map.getSource(BOUNDARY_SOURCE_ID);
+        if (source) {
+          source.setData(data);
+        }
+        if (map.getLayer(BOUNDARY_LAYER_ID)) {
+          map.setLayoutProperty(BOUNDARY_LAYER_ID, 'visibility', 'visible');
+        }
+        bounds = getGeojsonBounds(data);
       }
     }
 
@@ -1068,10 +1095,15 @@
       clearBoundaryLayer();
     }
 
+    if (bounds) {
+      map.fitBounds(bounds, { padding: 60, duration: 1600 });
+    } else if (Array.isArray(project.coords)) {
+      map.flyTo({
+        center: toLngLat(project.coords),
+        zoom: project.detailZoom || DETAIL_FALLBACK_ZOOM,
+        duration: 1600
       });
     }
-  }
-
   }
 
   function clearArchitectureTimers() {
@@ -1152,7 +1184,7 @@
   }
 
   function ensureArchitectureMarkers() {
-    hideArchitectureDetail();
+    setLayerVisibility(ARCHITECTURE_LAYER_ID, true);
   }
 
   function focusArchitectureProject(project) {
@@ -1544,7 +1576,6 @@
     if (activeScreen === 'architecture' && archDetailElement && !archDetailElement.hidden) {
       hideArchitectureDetail();
     }
-    });
   });
 
   function init() {
