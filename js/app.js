@@ -1,4 +1,4 @@
-/* global L, mapboxgl */
+/* global mapboxgl */
 (function () {
   'use strict';
 
@@ -35,16 +35,98 @@
   const MAPBOX_TOKEN =
     'pk.eyJ1IjoiZ2FicmllbG95Y2EiLCJhIjoiY21reHc4dGY1MDB6YTNjc2VwMzU3enN1dyJ9.gQPuafwneKenzEBQfjUZDQ';
 
-  const map = L.map('map', { zoomControl: false, attributionControl: false });
-  L.mapboxGL({
-    accessToken: MAPBOX_TOKEN,
-    style: 'mapbox://styles/mapbox/light-v11',
-    projection: 'mercator'
-  }).addTo(map);
+  mapboxgl.accessToken = MAPBOX_TOKEN;
 
-  L.control.zoom({ position: 'topright' }).addTo(map);
-  L.control.attribution({ position: 'bottomright', prefix: false }).addTo(map);
-  L.control.scale({ position: 'bottomleft', imperial: false, maxWidth: 120 }).addTo(map);
+  const map = new mapboxgl.Map({
+    container: 'map',
+    style: 'mapbox://styles/mapbox/light-v11',
+    projection: 'mercator',
+    center: [2.6, 47.1],
+    zoom: 5.4,
+    minZoom: 1,
+    maxZoom: 18,
+    attributionControl: false,
+    dragRotate: false,
+    pitchWithRotate: false
+  });
+
+  map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'top-right');
+  map.addControl(new mapboxgl.AttributionControl({ compact: true }), 'bottom-right');
+  map.addControl(new mapboxgl.ScaleControl({ maxWidth: 120, unit: 'metric' }), 'bottom-left');
+
+  map.on('style.load', () => {
+    try {
+      map.setProjection('mercator');
+    } catch (error) {
+      console.warn('Mapbox projection update failed:', error);
+    }
+
+    try {
+      const layers = map.getStyle().layers || [];
+      layers.forEach((layer) => {
+        const id = (layer.id || '').toLowerCase();
+
+        if (layer.type === 'background') {
+          map.setPaintProperty(layer.id, 'background-color', '#fbfbfb');
+        }
+
+        if (layer.type === 'fill' && id.includes('water')) {
+          map.setPaintProperty(layer.id, 'fill-color', '#dee3e6');
+          map.setPaintProperty(layer.id, 'fill-opacity', 1);
+        }
+        if (layer.type === 'line' && id.includes('waterway')) {
+          map.setPaintProperty(layer.id, 'line-color', '#d7dde1');
+          map.setPaintProperty(layer.id, 'line-opacity', 0.7);
+        }
+
+        if (layer.type === 'fill' && (id.includes('park') || id.includes('landuse') || id.includes('green'))) {
+          map.setPaintProperty(layer.id, 'fill-color', '#eef3ef');
+          map.setPaintProperty(layer.id, 'fill-opacity', 0.6);
+        }
+
+        if (layer.type === 'line' && id.includes('road') && !id.includes('label')) {
+          if (map.getPaintProperty(layer.id, 'line-color') !== undefined) {
+            map.setPaintProperty(layer.id, 'line-color', '#d6d9dc');
+          }
+          if (map.getPaintProperty(layer.id, 'line-opacity') !== undefined) {
+            map.setPaintProperty(layer.id, 'line-opacity', 0.35);
+          }
+        }
+
+        if (layer.type === 'line' && (id.includes('admin') || id.includes('boundary') || id.includes('border'))) {
+          if (map.getPaintProperty(layer.id, 'line-color') !== undefined) {
+            map.setPaintProperty(layer.id, 'line-color', '#e7a8a8');
+          }
+          if (map.getPaintProperty(layer.id, 'line-opacity') !== undefined) {
+            map.setPaintProperty(layer.id, 'line-opacity', 0.75);
+          }
+          if (map.getPaintProperty(layer.id, 'line-width') !== undefined) {
+            map.setPaintProperty(layer.id, 'line-width', 1);
+          }
+          if (map.getPaintProperty(layer.id, 'line-dasharray') !== undefined) {
+            map.setPaintProperty(layer.id, 'line-dasharray', [1.2, 1.6]);
+          }
+        }
+
+        if (layer.type === 'symbol') {
+          if (map.getPaintProperty(layer.id, 'text-color') !== undefined) {
+            map.setPaintProperty(layer.id, 'text-color', '#b7c0c7');
+          }
+          if (map.getPaintProperty(layer.id, 'text-halo-color') !== undefined) {
+            map.setPaintProperty(layer.id, 'text-halo-color', '#ffffff');
+          }
+          if (map.getPaintProperty(layer.id, 'text-halo-width') !== undefined) {
+            map.setPaintProperty(layer.id, 'text-halo-width', 1);
+          }
+          if (map.getPaintProperty(layer.id, 'text-opacity') !== undefined) {
+            map.setPaintProperty(layer.id, 'text-opacity', 0.9);
+          }
+        }
+      });
+    } catch (error) {
+      console.warn('Ajustes de estilo:', error);
+    }
+  });
 
   const HOME_CENTER = [47.1, 2.6];
   const HOME_ZOOM = 5.4;
@@ -75,7 +157,6 @@
   };
 
   const boundaryCache = new Map();
-  let activeBoundaryLayer = null;
 
   function escapeXml(str = '') {
     return String(str).replace(/[&<>'"]/g, (char) => {
@@ -698,30 +779,6 @@
     }
   ];
 
-  const cluster = L.markerClusterGroup({
-    showCoverageOnHover: false,
-    spiderfyOnMaxZoom: true,
-    zoomToBoundsOnClick: true,
-    maxClusterRadius: 44,
-    iconCreateFunction(clusterGroup) {
-      const count = clusterGroup.getChildCount();
-      let sizeClass = 'cluster--small';
-      if (count >= 10 && count < 20) {
-        sizeClass = 'cluster--medium';
-      } else if (count >= 20) {
-        sizeClass = 'cluster--large';
-      }
-
-      return L.divIcon({
-        html: `<span>${count}</span>`,
-        className: `cluster ${sizeClass}`,
-        iconSize: [46, 46],
-        iconAnchor: [23, 23]
-      });
-    }
-  });
-
-  const architectureLayer = L.layerGroup();
   let architectureRevealTimeout = null;
   let architecturePhotoTimers = [];
 
@@ -734,13 +791,6 @@
       </svg>
     `.trim();
   }
-
-  const architectureIcon = L.icon({
-    iconUrl: svgToDataUrl(buildArchitecturePinSvg()),
-    iconSize: [36, 50],
-    iconAnchor: [18, 48],
-    popupAnchor: [0, -26]
-  });
 
   function buildPinSvg(role) {
     if (role === 'chef') {
@@ -774,23 +824,6 @@
     return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svgMarkup)}`;
   }
 
-  function createPinIcon(role) {
-    const isChef = role === 'chef';
-    const size = isChef ? [40, 54] : [34, 46];
-    const svgMarkup = buildPinSvg(role);
-    return L.icon({
-      className: `project-pin project-pin--${role}`,
-      iconUrl: svgToDataUrl(svgMarkup),
-      iconSize: size,
-      iconAnchor: [size[0] / 2, size[1]],
-      popupAnchor: [0, -size[1] + 16]
-    });
-  }
-
-  const pinIcons = {
-    chef: createPinIcon('chef'),
-    charge: createPinIcon('charge')
-  };
 
   const projectStats = projects.reduce(
     (acc, project) => {
@@ -991,9 +1024,6 @@
   }
 
   function clearBoundaryLayer() {
-    if (activeBoundaryLayer) {
-      map.removeLayer(activeBoundaryLayer);
-      activeBoundaryLayer = null;
     }
   }
 
@@ -1031,18 +1061,6 @@
       const data = await loadBoundaryLayer(boundaryFile);
       if (data) {
         clearBoundaryLayer();
-        activeBoundaryLayer = L.geoJSON(data, {
-          style() {
-            return {
-              color: '#111827',
-              weight: 2.4,
-              opacity: 0.85,
-              fillOpacity: 0
-            };
-          }
-        });
-        activeBoundaryLayer.addTo(map);
-        bounds = activeBoundaryLayer.getBounds();
       }
     }
 
@@ -1050,48 +1068,10 @@
       clearBoundaryLayer();
     }
 
-    if (bounds && bounds.isValid()) {
-      map.flyToBounds(bounds, { padding: [60, 60], duration: 1.6, easeLinearity: 0.25 });
-    } else if (Array.isArray(project.coords)) {
-      map.flyTo(project.coords, project.detailZoom || DETAIL_FALLBACK_ZOOM, {
-        duration: 1.6,
-        easeLinearity: 0.25
       });
     }
   }
 
-  function refreshProjectMarkers() {
-    cluster.clearLayers();
-    projects.forEach((project) => {
-      const marker = L.marker(project.coords, {
-        icon: pinIcons[project.role] || pinIcons.charge,
-        title: project.title
-      });
-      marker.setZIndexOffset(project.role === 'chef' ? 200 : 0);
-      marker.on('click', (evt) => {
-        suppressMapClose = true;
-        if (evt && evt.originalEvent) {
-          evt.originalEvent.stopPropagation();
-        }
-        focusProjectArea(project);
-        openProjectPanel(project);
-        requestAnimationFrame(() => {
-          suppressMapClose = false;
-        });
-      });
-      marker.bindPopup(createProjectPopup(project), { className: 'project-popup' });
-      cluster.addLayer(marker);
-    });
-    if (!map.hasLayer(cluster)) {
-      map.addLayer(cluster);
-    }
-  }
-
-  function removeProjectMarkers() {
-    if (map.hasLayer(cluster)) {
-      map.removeLayer(cluster);
-    }
-    clearBoundaryLayer();
   }
 
   function clearArchitectureTimers() {
@@ -1172,35 +1152,6 @@
   }
 
   function ensureArchitectureMarkers() {
-    if (!map.hasLayer(architectureLayer)) {
-      map.addLayer(architectureLayer);
-    }
-    if (architectureLayer.getLayers().length > 0) {
-      return;
-    }
-    architectureProjects.forEach((project) => {
-      const marker = L.marker(project.coords, {
-        icon: architectureIcon,
-        title: project.title
-      });
-      marker.on('click', (evt) => {
-        suppressMapClose = true;
-        if (evt && evt.originalEvent) {
-          evt.originalEvent.stopPropagation();
-        }
-        focusArchitectureProject(project);
-        requestAnimationFrame(() => {
-          suppressMapClose = false;
-        });
-      });
-      architectureLayer.addLayer(marker);
-    });
-  }
-
-  function removeArchitectureMarkers() {
-    if (map.hasLayer(architectureLayer)) {
-      map.removeLayer(architectureLayer);
-    }
     hideArchitectureDetail();
   }
 
@@ -1212,7 +1163,6 @@
     hideArchitectureDetail();
 
     const zoom = project.zoom || 13;
-    map.flyTo(project.coords, zoom, { duration: 1.8, easeLinearity: 0.25 });
 
     map.once('moveend', () => {
       architectureRevealTimeout = setTimeout(() => {
@@ -1408,7 +1358,6 @@
     if (resetIntro && activeScreen === 'projects') {
       showProjectIntro();
     }
-    map.closePopup();
   }
 
   if (projectCloseButton) {
@@ -1540,7 +1489,6 @@
   window.addEventListener('resize', computePlayfield);
 
   function toHome() {
-    map.setView(HOME_CENTER, HOME_ZOOM);
     removeProjectMarkers();
     removeArchitectureMarkers();
     closeProjectPanel({ resetIntro: false });
@@ -1552,8 +1500,6 @@
   }
 
   function toProjects() {
-    map.flyTo(PROJECT_CENTER, PROJECT_ZOOM, { duration: 2, easeLinearity: 0.2 });
-    refreshProjectMarkers();
     removeArchitectureMarkers();
     closeProjectPanel();
     showProjectIntro();
@@ -1575,7 +1521,6 @@
     if (pubList) {
       pubList.scrollTop = 0;
     }
-    map.flyTo(PUBLICATION_CENTER, PUBLICATION_ZOOM, { duration: 2.2, easeLinearity: 0.2 });
   }
 
   function toArchitecture() {
@@ -1587,7 +1532,6 @@
     showArchitectureIntro();
     hideArchitectureDetail();
     ensureArchitectureMarkers();
-    map.flyTo(ARCHITECTURE_CENTER, ARCHITECTURE_ZOOM, { duration: 2.2, easeLinearity: 0.22 });
   }
 
   map.on('click', () => {
@@ -1600,27 +1544,16 @@
     if (activeScreen === 'architecture' && archDetailElement && !archDetailElement.hidden) {
       hideArchitectureDetail();
     }
-  });
-
-  cluster.on('clusterclick', (evt) => {
-    suppressMapClose = true;
-    if (evt && evt.originalEvent) {
-      evt.originalEvent.stopPropagation();
-    }
-    requestAnimationFrame(() => {
-      suppressMapClose = false;
     });
   });
 
   function init() {
     hydrateThemeAssets();
-    map.setView(HOME_CENTER, HOME_ZOOM);
     hideArchitectureIntro();
     activateScreen('home');
   }
 
   init();
 
-  console.assert(typeof L !== 'undefined', 'Leaflet should be available');
   console.assert(Array.isArray(projects) && projects.length > 0, 'Project list should not be empty');
 })();

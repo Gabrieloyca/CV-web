@@ -38,23 +38,19 @@ body {
   filter: brightness(1.05) contrast(0.88) saturate(0.65);
 }
 
-.leaflet-control-zoom,
-.leaflet-control-layers {
+.mapboxgl-ctrl-group {
   border: 0;
   border-radius: 14px;
   box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
   overflow: hidden;
 }
 
-.leaflet-control-zoom a,
-.leaflet-control-layers a {
+.mapboxgl-ctrl-group button {
   width: 36px;
   height: 36px;
-  line-height: 36px;
-  border: 0;
 }
 
-.leaflet-control-attribution {
+.mapboxgl-ctrl-attrib {
   background: rgba(255, 255, 255, 0.75);
   backdrop-filter: blur(8px);
   border-radius: 12px;
